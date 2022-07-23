@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Reflection.Emit;
 using System.Text;
@@ -41,7 +42,7 @@ namespace NetworkRenameTool {
         private void FeedNetworkAdapters()
         {
             IEnumerable<IP_ADAPTER_ADDRESSES> adapterAddresses_es = GetAdaptersAddresses();
-            cmbNetworkAdapters.DataSource = Enumerable.ToList(adapterAddresses_es.Select(a => new KeyValuePair<string, NET_LUID>(a.FriendlyName + " " + a.AdapterName + " " + $"0x{a.Luid.Value:X}", a.Luid)).ToList());
+            cmbNetworkAdapters.DataSource = Enumerable.ToList(adapterAddresses_es.Select(a => new KeyValuePair<string, IP_ADAPTER_ADDRESSES>(a.FriendlyName + " " + a.AdapterName + " " + $"0x{a.Luid.Value:X}", a)).ToList());
             cmbNetworkAdapters.ValueMember = "Value";
             cmbNetworkAdapters.DisplayMember = "Key";
             if (cmbNetworkAdapters.Items.Count > 0)
@@ -115,9 +116,10 @@ namespace NetworkRenameTool {
 
         #endregion
 
-        private bool searchSetNetworkAdapterClassNdisDeviceType(string targetNetCfgInstanceId, uint val)
+        private bool searchSetNetworkAdapterClassNdisDeviceType(string targetNetCfgInstanceId, uint val, out string restoringPowershellScript)
         {
             bool nwAdapterClassFound = false;
+            restoringPowershellScript = "";
             using (var nwAdapterClasses = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}", true))
             {
                 foreach (var classIndex in nwAdapterClasses.GetSubKeyNames())
@@ -130,6 +132,8 @@ namespace NetworkRenameTool {
                             var netCfgInstanceId = (string)netCfgInstanceIdRaw;
                             if (netCfgInstanceId.ToLower().Equals(targetNetCfgInstanceId.ToLower()))
                             {
+                                object oldValue = classSubKey.GetValue("*NdisDeviceType", 0);
+                                restoringPowershellScript = $"New-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{{4d36e972-e325-11ce-bfc1-08002be10318}}\\{classIndex}' -Name '*NdisDeviceType' -Value {oldValue} -PropertyType DWORD -Force -Confirm:$False ;";
                                 classSubKey.SetValue("*NdisDeviceType", val, RegistryValueKind.DWord);
                                 nwAdapterClassFound = true;
                                 break;
@@ -143,86 +147,14 @@ namespace NetworkRenameTool {
 
         private void btnAddNetworkProfile_Click(object sender, System.EventArgs e)
         {
-            var luid = (NET_LUID)cmbNetworkAdapters.SelectedValue;
-            var ifInfo = GetAdaptersAddresses().Where(x => x.Luid.Equals(luid)).First();
-
-            var unicastAddressList = ifInfo.UnicastAddresses.Where(ip => ip.Address.GetSOCKADDR().si_family == Vanara.PInvoke.Ws2_32.ADDRESS_FAMILY.AF_INET && !ip.Address.GetSOCKADDR().Ipv4.ToString().StartsWith("169.254")).Take(1).ToList();
-
-            if (unicastAddressList.Count == 0)
-            {
-                MessageBox.Show("Seems no IPv4 address currently configured for this adapter. Please set one first!");
-                return;
-            }
-
-            var ipv4Address = unicastAddressList[0].Address.GetSOCKADDR().Ipv4;
-
+            var ifInfo = (IP_ADAPTER_ADDRESSES)cmbNetworkAdapters.SelectedValue;
             var fakeIp = System.Net.IPAddress.Parse(txbFakeIp.Text);
-            var ipBytes = fakeIp.GetAddressBytes();
-            var fakeIpRaw = (uint)ipBytes[3] << 24;
-            fakeIpRaw += (uint)ipBytes[2] << 16;
-            fakeIpRaw += (uint)ipBytes[1] << 8;
-            fakeIpRaw += (uint)ipBytes[0];
-
-            Vanara.PInvoke.Win32Error result = Vanara.PInvoke.Win32Error.NO_ERROR;
-
             var luidHash = new System.Security.Cryptography.MD5CryptoServiceProvider().ComputeHash(System.BitConverter.GetBytes(ifInfo.Luid.Value)).Take(3).ToArray();
-
-            var ipnrPhysicalAddressStr = "";
-
-            int i;
-            for (i = 0; i < 8; ++i)
-            {
-                MIB_IPNET_ROW2 ipnr = default;
-                ipnr.Address.si_family = Vanara.PInvoke.Ws2_32.ADDRESS_FAMILY.AF_INET;
-                ipnr.Address.Ipv4.sin_addr.S_addr = fakeIpRaw;
-                ipnr.InterfaceLuid.Value = ifInfo.Luid.Value;
-                ipnr.PhysicalAddress = new byte[IF_MAX_PHYS_ADDRESS_LENGTH];
-                ipnr.PhysicalAddress[0] = 0x00; // just make something up that's consistent and not part of this net
-                ipnr.PhysicalAddress[1] = 0x00;
-                ipnr.PhysicalAddress[2] = 0xA3;
-                ipnr.PhysicalAddress[3] = luidHash[0];
-                ipnr.PhysicalAddress[4] = luidHash[1];
-                ipnr.PhysicalAddress[5] = luidHash[2];
-                ipnrPhysicalAddressStr = System.BitConverter.ToString(ipnr.PhysicalAddress.Take(6).ToArray());
-                ipnr.PhysicalAddressLength = 6;
-                ipnr.State = NL_NEIGHBOR_STATE.NlnsPermanent;
-                ipnr.Flags = MIB_IPNET_ROW2_FLAGS.IsRouther;
-                ipnr.ReachabilityTime = 0; // LastReachable
-                result = CreateIpNetEntry2(ref ipnr);
-                if (result != Vanara.PInvoke.Win32Error.NO_ERROR)
-                    Thread.Sleep(250);
-                else break;
-            }
-            if (i == 8)
-            {
-                MessageBox.Show("CreateIpNetEntry2 Failure: " + result.ToString());
-                return;
-            }
-
-            for (i = 0; i < 8; ++i)
-            {
-                MIB_IPFORWARD_ROW2 nr;
-                InitializeIpForwardEntry(out nr);
-                nr.InterfaceLuid.Value = ifInfo.Luid.Value;
-                nr.DestinationPrefix.Prefix.si_family = Vanara.PInvoke.Ws2_32.ADDRESS_FAMILY.AF_INET; // rest is left as 0.0.0.0/0
-                nr.NextHop.si_family = Vanara.PInvoke.Ws2_32.ADDRESS_FAMILY.AF_INET;
-                nr.NextHop.Ipv4.sin_addr.S_addr = fakeIpRaw;
-                nr.Metric = 9999; // do not use as real default route
-                nr.Protocol = MIB_IPFORWARD_PROTO.MIB_IPPROTO_NETMGMT;
-
-                result = CreateIpForwardEntry2(ref nr);
-                if (result != Vanara.PInvoke.Win32Error.NO_ERROR)
-                    Thread.Sleep(250);
-                else break;
-            }
-            if (i == 8)
-            {
-                MessageBox.Show("CreateIpForwardEntry2 Failure: " + result.ToString());
-                return;
-            }
+            var fakeMac = $"00-00-A3-{luidHash[0]:X2}-{luidHash[1]:X2}-{luidHash[2]:X2}";
 
             bool nwAdapterClassFound;
-            nwAdapterClassFound = searchSetNetworkAdapterClassNdisDeviceType(ifInfo.AdapterName, 0);
+            string restoringNdisDeviceTypePwshScript;
+            nwAdapterClassFound = searchSetNetworkAdapterClassNdisDeviceType(ifInfo.AdapterName, 0, out restoringNdisDeviceTypePwshScript);
 
             if (nwAdapterClassFound == false)
             {
@@ -230,24 +162,39 @@ namespace NetworkRenameTool {
                 return;
             }
 
-            MessageBox.Show($"Successfully added ARP entry {fakeIp} ~ {ipnrPhysicalAddressStr} (On {ipv4Address}), and created default route 0.0.0.0/0 ~ {fakeIp}.\nYou may need to reboot your PC, set an IP address to this adapter and execute this operation again to assign a network profile.");
-        }
+            var addingArpEntryPwshScript = $@"New-NetRoute -InterfaceIndex $(Get-NetAdapter | Where NetLuid -eq {ifInfo.Luid.Value}).InterfaceIndex -DestinationPrefix '0.0.0.0/0' -NextHop '{fakeIp}' -RouteMetric 9999 -Confirm:$False | Select ifIndex, RouteMetric, Store, DestinationPrefix, NextHop | Format-Table ;";
+            var restoringArpEntryPwshScript = $@"Remove-NetRoute -InterfaceIndex $(Get-NetAdapter | Where NetLuid -eq {ifInfo.Luid.Value}).InterfaceIndex -DestinationPrefix '0.0.0.0/0' -NextHop '{fakeIp}' -RouteMetric 9999 -Confirm:$False ;";
+            var addingGatewayRoutePwshScript = $@"New-NetNeighbor -InterfaceIndex $(Get-NetAdapter | Where NetLuid -eq {ifInfo.Luid.Value}).InterfaceIndex -IPAddress '{fakeIp}' -LinkLayerAddress '{fakeMac}' -State Permanent -Confirm:$False | Select ifIndex, Store, IPAddress, LinkLayerAddress | Format-Table ;";
+            var restoringGatewayRoutePwshScript = $@"Remove-NetNeighbor -InterfaceIndex $(Get-NetAdapter | Where NetLuid -eq {ifInfo.Luid.Value}).InterfaceIndex -IPAddress '{fakeIp}' -LinkLayerAddress '{fakeMac}' -State Permanent -Confirm:$False ;";
 
-        private void btnSetNdisDeviceType_Click(object sender, EventArgs e)
-        {
-            var luid = (NET_LUID)cmbNetworkAdapters.SelectedValue;
-            var ifInfo = GetAdaptersAddresses().Where(x => x.Luid.Equals(luid)).First();
+            ProcessStartInfo startInfo = new ProcessStartInfo();
+            startInfo.FileName = @"powershell.exe";
+            startInfo.Arguments = $@"& {{ { addingArpEntryPwshScript } ; { addingGatewayRoutePwshScript } ; }}";
+            startInfo.RedirectStandardOutput = true;
+            startInfo.RedirectStandardError = true;
+            startInfo.UseShellExecute = false;
+            startInfo.CreateNoWindow = true;
+            Process process = new Process();
+            process.StartInfo = startInfo;
+            process.Start();
 
-            bool nwAdapterClassFound;
-            nwAdapterClassFound = searchSetNetworkAdapterClassNdisDeviceType(ifInfo.AdapterName, 1);
+            string output = process.StandardOutput.ReadToEnd();
+            string errors = process.StandardError.ReadToEnd();
 
-            if (nwAdapterClassFound == false)
-            {
-                MessageBox.Show($@"NetCfgInstanceId={ifInfo.AdapterName} not found in HKLM\SYSTEM\CurrentControlSet\Control\Class");
-                return;
-            }
+            MessageBox.Show($"Powershell stdout\n=================\n" + output + "\n=================\n\nPowershell stderr\n=================\n" + errors + "\n=================");
 
-            MessageBox.Show("Success. Please reboot your PC.");
+            string restoringFilePath = Environment.GetFolderPath(System.Environment.SpecialFolder.DesktopDirectory) + System.IO.Path.DirectorySeparatorChar +
+                string.Join("_", ("Restore settings for " + ifInfo.FriendlyName + ".bat").Split(System.IO.Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries)).TrimEnd('.');
+
+            System.IO.File.WriteAllLines(restoringFilePath,
+                new string[]{
+                    $@"powershell -Command Start-Process powershell -Verb runas -ArgumentList """"""{restoringGatewayRoutePwshScript.Replace("$", "`$")} {restoringArpEntryPwshScript.Replace("$", "`$")} {restoringNdisDeviceTypePwshScript.Replace("$", "`$")} pause ; """""""
+                }
+            );
+
+            MessageBox.Show($"A script that can restore settings is generated at " + restoringFilePath + ".");
+
+            MessageBox.Show($"You may need a reboot to make the changes to NdisDeviceType take effect.");
         }
     }
 

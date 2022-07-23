@@ -34,7 +34,6 @@
             this.lblNetworkAdapters = new System.Windows.Forms.Label();
             this.lblFakeIp = new System.Windows.Forms.Label();
             this.panel1 = new System.Windows.Forms.Panel();
-            this.btnSetNdisDeviceType = new System.Windows.Forms.Button();
             this.panel2 = new System.Windows.Forms.Panel();
             this.panel4 = new System.Windows.Forms.Panel();
             this.panel3 = new System.Windows.Forms.Panel();
@@ -103,10 +102,10 @@
             // 
             // btnAddNetworkProfile
             // 
-            this.btnAddNetworkProfile.Dock = System.Windows.Forms.DockStyle.Top;
+            this.btnAddNetworkProfile.Dock = System.Windows.Forms.DockStyle.Fill;
             this.btnAddNetworkProfile.Location = new System.Drawing.Point(15, 15);
             this.btnAddNetworkProfile.Name = "btnAddNetworkProfile";
-            this.btnAddNetworkProfile.Size = new System.Drawing.Size(229, 28);
+            this.btnAddNetworkProfile.Size = new System.Drawing.Size(229, 72);
             this.btnAddNetworkProfile.TabIndex = 1;
             this.btnAddNetworkProfile.Text = "Add Network Profile";
             this.btnAddNetworkProfile.UseVisualStyleBackColor = true;
@@ -151,7 +150,6 @@
             // 
             // panel1
             // 
-            this.panel1.Controls.Add(this.btnSetNdisDeviceType);
             this.panel1.Controls.Add(this.btnAddNetworkProfile);
             this.panel1.Dock = System.Windows.Forms.DockStyle.Right;
             this.panel1.Location = new System.Drawing.Point(871, 0);
@@ -159,17 +157,6 @@
             this.panel1.Padding = new System.Windows.Forms.Padding(15);
             this.panel1.Size = new System.Drawing.Size(259, 102);
             this.panel1.TabIndex = 6;
-            // 
-            // btnSetNdisDeviceType
-            // 
-            this.btnSetNdisDeviceType.Dock = System.Windows.Forms.DockStyle.Bottom;
-            this.btnSetNdisDeviceType.Location = new System.Drawing.Point(15, 57);
-            this.btnSetNdisDeviceType.Name = "btnSetNdisDeviceType";
-            this.btnSetNdisDeviceType.Size = new System.Drawing.Size(229, 30);
-            this.btnSetNdisDeviceType.TabIndex = 2;
-            this.btnSetNdisDeviceType.Text = "Set *NdisDeviceType=1";
-            this.btnSetNdisDeviceType.UseVisualStyleBackColor = true;
-            this.btnSetNdisDeviceType.Click += new System.EventHandler(this.btnSetNdisDeviceType_Click);
             // 
             // panel2
             // 
@@ -241,7 +228,6 @@
         private System.Windows.Forms.Panel panel2;
         private System.Windows.Forms.Panel panel4;
         private System.Windows.Forms.Panel panel3;
-        private System.Windows.Forms.Button btnSetNdisDeviceType;
     }
 }
 
